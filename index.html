@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MilestoneEscrow</title>
+<style>
+  :root { --bg:#0f1115; --fg:#e8eaed; --mut:#9aa0a6; --card:#181b21; --line:#2a2e36; --acc:#28a0f0; --ok:#3ddc97; --bad:#ff6b6b; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f7f9; --fg:#14171c; --mut:#5f6670; --card:#fff; --line:#dde1e7; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,sans-serif; }
+  main { max-width:820px; margin:0 auto; padding:20px 16px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:16px; margin:0 0 10px; }
+  .sub { color:var(--mut); margin-bottom:18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 2px; }
+  input { width:100%; padding:8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  button { padding:8px 14px; border-radius:6px; border:0; background:var(--acc); color:#fff; font:inherit; cursor:pointer; margin:8px 6px 0 0; }
+  button.sec { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  .ms { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:6px 0; border-top:1px solid var(--line); }
+  .ms .grow { flex:1; min-width:180px; }
+  .tag { font-size:11px; padding:2px 8px; border-radius:10px; border:1px solid var(--line); }
+  #log { white-space:pre-wrap; font:12px/1.5 ui-monospace,monospace; color:var(--mut); }
+  .err { color:var(--bad); } .ok { color:var(--ok); }
+  #msbox > div { margin-bottom:4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>MilestoneEscrow</h1>
+  <div class="sub">Milestone-based escrow for USDG on Arbitrum Sepolia. Testnet demo.</div>
+
+  <div class="card">
+    <h2>Wallet and contracts</h2>
+    <button id="connect">Connect wallet</button> <span id="acct" class="sub"></span>
+    <div class="row">
+      <div><label>Escrow contract address</label><input id="escrowAddr" placeholder="0x..."></div>
+      <div><label>Token address (USDG or mUSDG)</label><input id="tokenAddr" placeholder="0x..."></div>
+    </div>
+    <button class="sec" id="faucet">Mint 1,000 mUSDG (mock token faucet)</button>
+  </div>
+
+  <div class="card">
+    <h2>1. Create job (client)</h2>
+    <div class="row">
+      <div><label>Payee (freelancer)</label><input id="payee" placeholder="0x..."></div>
+      <div><label>Arbiter (neutral third party)</label><input id="arbiter" placeholder="0x..."></div>
+    </div>
+    <div id="msInputs"></div>
+    <button class="sec" id="addMs">+ Add milestone</button>
+    <button id="create">Create job</button>
+    <div class="sub">Amounts are in token units with 6 decimals shown as decimals (e.g. 100.5). Deadline in days from now.</div>
+  </div>
+
+  <div class="card">
+    <h2>2. Manage a job</h2>
+    <div class="row">
+      <div><label>Job ID</label><input id="jobId" type="number" min="0" value="0"></div>
+      <div style="align-self:end"><button class="sec" id="load">Load job</button></div>
+    </div>
+    <div id="jobInfo" class="sub"></div>
+    <button id="fund">Approve token and deposit (client)</button>
+    <button class="sec" id="cancel">Cancel unfunded job</button>
+    <div id="msbox"></div>
+  </div>
+
+  <div class="card"><h2>Log</h2><div id="log"></div></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script>
+const CHAIN_ID = 421614n;
+const CHAIN_HEX = "0x66eee";
+const DECIMALS = 6;
+const STATUS = ["Pending", "Released", "Refunded", "Disputed", "Resolved"];
+const ESCROW_ABI = [
+  "function createJob(address payee,address arbiter,address token,uint128[] amounts,uint64[] deadlines) returns (uint256)",
+  "function fund(uint256 id)", "function cancel(uint256 id)",
+  "function approve(uint256 id,uint256 index)", "function refund(uint256 id,uint256 index)",
+  "function dispute(uint256 id,uint256 index)", "function resolve(uint256 id,uint256 index,uint256 toPayee)",
+  "function getJob(uint256 id) view returns (tuple(address client,address payee,address arbiter,address token,bool funded,bool cancelled,uint256 total))",
+  "function getMilestones(uint256 id) view returns (tuple(uint128 amount,uint64 deadline,uint8 status)[])",
+  "event JobCreated(uint256 indexed id,address indexed client,address indexed payee,address arbiter,address token,uint256 total)"
+];
+const ERC20_ABI = [
+  "function approve(address,uint256) returns (bool)", "function allowance(address,address) view returns (uint256)",
+  "function faucet(uint256)"
+];
+const $ = id => document.getElementById(id);
+let provider, signer, me, job;
+
+function log(msg, cls) {
+  const d = document.createElement("div"); if (cls) d.className = cls; d.textContent = msg;
+  $("log").prepend(d);
+}
+function saved() { try { return JSON.parse(localStorage.getItem("esc") || "{}"); } catch { return {}; } }
+function save() { try { localStorage.setItem("esc", JSON.stringify({ e: $("escrowAddr").value, t: $("tokenAddr").value })); } catch {} }
+const DEPLOYED = { e: "0x6290BA9aE17D79E165e1f2D1eE566De63DFB2707", t: "0x260653ff70b7165f3c6A4911BB9BeE13b8773359" }; // Arbitrum Sepolia
+const s = saved(); $("escrowAddr").value = s.e || DEPLOYED.e; $("tokenAddr").value = s.t || DEPLOYED.t;
+$("escrowAddr").onchange = $("tokenAddr").onchange = save;
+
+async function run(label, fn) {
+  try { await fn(); } catch (e) { log(label + " failed: " + (e.shortMessage || e.reason || e.message), "err"); }
+}
+function escrow() {
+  if (!signer) throw new Error("Connect wallet first");
+  return new ethers.Contract(ethers.getAddress($("escrowAddr").value.trim()), ESCROW_ABI, signer);
+}
+function token() { return new ethers.Contract(ethers.getAddress($("tokenAddr").value.trim()), ERC20_ABI, signer); }
+async function send(label, p) {
+  const tx = await p; log(label + " sent: " + tx.hash);
+  const r = await tx.wait(); log(label + " confirmed in block " + r.blockNumber, "ok"); return r;
+}
+
+$("connect").onclick = () => run("Connect", async () => {
+  if (!window.ethereum) throw new Error("No wallet found (install MetaMask)");
+  provider = new ethers.BrowserProvider(window.ethereum);
+  await provider.send("eth_requestAccounts", []);
+  const net = await provider.getNetwork();
+  if (net.chainId !== CHAIN_ID) {
+    try { await provider.send("wallet_switchEthereumChain", [{ chainId: CHAIN_HEX }]); }
+    catch { await provider.send("wallet_addEthereumChain", [{ chainId: CHAIN_HEX, chainName: "Arbitrum Sepolia",
+      nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"],
+      blockExplorerUrls: ["https://sepolia.arbiscan.io"] }]); }
+    provider = new ethers.BrowserProvider(window.ethereum);
+  }
+  signer = await provider.getSigner(); me = await signer.getAddress();
+  $("acct").textContent = me; log("Connected " + me, "ok");
+});
+
+$("faucet").onclick = () => run("Faucet", async () => send("Faucet", token().faucet(ethers.parseUnits("1000", DECIMALS))));
+
+function addMsRow(amount = "", days = "") {
+  const d = document.createElement("div"); d.className = "row";
+  d.innerHTML = '<div><label>Milestone amount</label><input class="amt" placeholder="100"></div>' +
+                '<div><label>Deadline (days from now)</label><input class="dl" type="number" placeholder="14"></div>';
+  d.querySelector(".amt").value = amount; d.querySelector(".dl").value = days;
+  $("msInputs").appendChild(d);
+}
+addMsRow("100", "14"); addMsRow("200", "28");
+$("addMs").onclick = () => addMsRow();
+
+$("create").onclick = () => run("Create", async () => {
+  const amts = [...document.querySelectorAll(".amt")].map(i => ethers.parseUnits(i.value.trim(), DECIMALS));
+  const now = Math.floor(Date.now() / 1000);
+  const dls = [...document.querySelectorAll(".dl")].map(i => now + Math.round(Number(i.value) * 86400));
+  const e = escrow();
+  const r = await send("Create job", e.createJob($("payee").value.trim(), $("arbiter").value.trim(), ethers.getAddress($("tokenAddr").value.trim()), amts, dls));
+  for (const l of r.logs) { try { const p = e.interface.parseLog(l); if (p && p.name === "JobCreated") { $("jobId").value = p.args.id.toString(); log("Job ID " + p.args.id, "ok"); } } catch {} }
+  await loadJob();
+});
+
+async function loadJob() {
+  const e = escrow(); const id = BigInt($("jobId").value);
+  job = await e.getJob(id);
+  if (job.client === ethers.ZeroAddress) { $("jobInfo").textContent = "No such job"; $("msbox").innerHTML = ""; return; }
+  const ms = await e.getMilestones(id);
+  const f = v => ethers.formatUnits(v, DECIMALS);
+  $("jobInfo").textContent = `client ${job.client} | payee ${job.payee} | arbiter ${job.arbiter} | total ${f(job.total)} | ` +
+    (job.cancelled ? "cancelled" : job.funded ? "funded" : "not funded yet");
+  const box = $("msbox"); box.innerHTML = "";
+  ms.forEach((m, i) => {
+    const st = Number(m.status), due = new Date(Number(m.deadline) * 1000);
+    const row = document.createElement("div"); row.className = "ms";
+    row.innerHTML = `<div class="grow">#${i} &middot; ${f(m.amount)} &middot; due ${due.toLocaleString()} <span class="tag">${STATUS[st]}</span></div>`;
+    const add = (txt, fn, cls) => { const b = document.createElement("button"); b.textContent = txt; if (cls) b.className = cls;
+      b.onclick = () => run(txt, async () => { await send(txt, fn()); await loadJob(); }); row.appendChild(b); };
+    if (st === 0 && job.funded) {
+      add("Approve", () => e.approve(id, i));
+      add("Refund", () => e.refund(id, i), "sec");
+      add("Dispute", () => e.dispute(id, i), "sec");
+    }
+    if (st === 3) {
+      add("Resolve: all to payee", () => e.resolve(id, i, m.amount), "sec");
+      add("Resolve: all to client", () => e.resolve(id, i, 0), "sec");
+      add("Resolve: 50/50", () => e.resolve(id, i, m.amount / 2n), "sec");
+    }
+    box.appendChild(row);
+  });
+}
+$("load").onclick = () => run("Load", loadJob);
+
+$("fund").onclick = () => run("Deposit", async () => {
+  const e = escrow(); const id = BigInt($("jobId").value); const j = await e.getJob(id);
+  const t = new ethers.Contract(j.token, ERC20_ABI, signer);
+  if ((await t.allowance(me, await e.getAddress())) < j.total) await send("Token approve", t.approve(await e.getAddress(), j.total));
+  await send("Deposit", e.fund(id)); await loadJob();
+});
+$("cancel").onclick = () => run("Cancel", async () => { await send("Cancel", escrow().cancel(BigInt($("jobId").value))); await loadJob(); });
+</script>
+</body>
+</html>
