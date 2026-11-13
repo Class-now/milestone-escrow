@@ -2,7 +2,7 @@
 
 Milestone-based escrow for USDG (any ERC-20) on Arbitrum. Built for the Arbitrum Open House São Paulo Online Buildathon.
 
-**Live demo (Arbitrum Sepolia):** https://class-now.github.io/milestone-escrow/
+**Live demo (Arbitrum Sepolia):** https://class-now.github.io/milestone-escrow/ · **Demo video (65 s):** [demo/milestone-escrow-demo.mp4](demo/milestone-escrow-demo.mp4)
 
 ## Problem
 
