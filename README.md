@@ -2,6 +2,8 @@
 
 Milestone-based escrow for USDG (any ERC-20) on Arbitrum. Built for the Arbitrum Open House São Paulo Online Buildathon.
 
+**Live demo (Arbitrum Sepolia):** https://class-now.github.io/milestone-escrow/
+
 ## Problem
 
 Cross-border freelancers (a large share of Latin American remote workers) face two failures: the client pays late or not at all, or the freelancer delivers and the client has no safe way to commit funds up front. Bank wires and card rails add fees and days of delay. Fully trusting a stranger on either side kills the deal.
