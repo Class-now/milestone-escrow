@@ -96,7 +96,7 @@ function log(msg, cls) {
 }
 function saved() { try { return JSON.parse(localStorage.getItem("esc") || "{}"); } catch { return {}; } }
 function save() { try { localStorage.setItem("esc", JSON.stringify({ e: $("escrowAddr").value, t: $("tokenAddr").value })); } catch {} }
-const DEPLOYED = { e: "0x6290BA9aE17D79E165e1f2D1eE566De63DFB2707", t: "0x260653ff70b7165f3c6A4911BB9BeE13b8773359" }; // Arbitrum Sepolia
+const DEPLOYED = { e: "0x55501CfbD04DA43110a59b792a326f2F929eFE91", t: "0x260653ff70b7165f3c6A4911BB9BeE13b8773359" }; // Arbitrum Sepolia
 const s = saved(); $("escrowAddr").value = s.e || DEPLOYED.e; $("tokenAddr").value = s.t || DEPLOYED.t;
 $("escrowAddr").onchange = $("tokenAddr").onchange = save;
 

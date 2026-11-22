@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 /// @title MilestoneEscrow
@@ -94,6 +95,9 @@ contract MilestoneEscrow {
         uint256 n = amounts.length;
         if (n == 0 || n > 50 || n != deadlines.length) revert BadParams();
         if (payee == address(0) || arbiter == address(0) || token == address(0)) revert BadParams();
+        // A call to an address without code "succeeds" with empty return data, so a job on such a
+        // token would look funded while holding nothing. Reject it up front.
+        if (token.code.length == 0) revert BadParams();
         if (payee == msg.sender || arbiter == msg.sender || arbiter == payee) revert BadParams();
 
         id = nextJobId++;
@@ -114,7 +118,12 @@ contract MilestoneEscrow {
         if (j.funded) revert AlreadyFunded();
         if (j.cancelled) revert Cancelled();
         j.funded = true;
+        // Balances of all jobs on the same token share this contract's account, so a
+        // fee-on-transfer or rebasing-down token that delivers less than `total` would let this
+        // job's payouts draw on other jobs' deposits. Require the full amount to arrive.
+        uint256 before = IERC20(j.token).balanceOf(address(this));
         _pull(j.token, msg.sender, j.total);
+        if (IERC20(j.token).balanceOf(address(this)) - before < j.total) revert TransferFailed();
         emit JobFunded(id, j.total);
     }
 

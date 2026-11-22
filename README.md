@@ -2,8 +2,6 @@
 
 Milestone-based escrow for USDG (any ERC-20) on Arbitrum. Built for the Arbitrum Open House São Paulo Online Buildathon.
 
-**Live demo (Arbitrum Sepolia):** https://class-now.github.io/milestone-escrow/ · **Demo video (65 s):** [demo/milestone-escrow-demo.mp4](demo/milestone-escrow-demo.mp4)
-
 ## Problem
 
 Cross-border freelancers (a large share of Latin American remote workers) face two failures: the client pays late or not at all, or the freelancer delivers and the client has no safe way to commit funds up front. Bank wires and card rails add fees and days of delay. Fully trusting a stranger on either side kills the deal.
@@ -28,12 +26,12 @@ Cross-border freelancers (a large share of Latin American remote workers) face t
 
 Invariants (covered by fuzz tests): the escrow balance always equals the sum of Pending and Disputed milestones; every milestone settles exactly once; funds only move to the client, the payee, or per the arbiter split.
 
-Design notes: ERC-20 calls tolerate non-standard tokens that return no value; reentrancy guard on all fund-moving functions; state is updated before transfers; no admin, no upgrade, no fees. The payee can dispute before the client refunds, so a client cannot simply wait out a deadline to take the money back when work was delivered. Trade-off: either side can force arbitration, so the arbiter choice matters.
+Design notes: ERC-20 calls tolerate non-standard tokens that return no value; `createJob` rejects a token address with no code (a call to it would "succeed" and the job would look funded while holding nothing), and `fund` checks the escrow balance actually grew by the full total, so a fee-on-transfer or deflationary token cannot make one job's payouts draw on other jobs' deposits; reentrancy guard on all fund-moving functions; state is updated before transfers; no admin, no upgrade, no fees. The payee can dispute before the client refunds, so a client cannot simply wait out a deadline to take the money back when work was delivered. Trade-off: either side can force arbitration, so the arbiter choice matters.
 
 ## Run
 
 ```
-forge test              # 24 tests, 2 of them fuzz (512 runs each)
+forge test              # 27 tests, 2 of them fuzz (512 runs each)
 open index.html         # or serve statically; needs a browser wallet
 ```
 
@@ -43,7 +41,7 @@ open index.html         # or serve statically; needs a browser wallet
 
 | Contract | Address |
 |---|---|
-| MilestoneEscrow | [0x6290BA9aE17D79E165e1f2D1eE566De63DFB2707](https://sepolia.arbiscan.io/address/0x6290BA9aE17D79E165e1f2D1eE566De63DFB2707) |
+| MilestoneEscrow | [0x55501CfbD04DA43110a59b792a326f2F929eFE91](https://sepolia.arbiscan.io/address/0x55501CfbD04DA43110a59b792a326f2F929eFE91) |
 | MockUSDG (test token) | [0x260653ff70b7165f3c6A4911BB9BeE13b8773359](https://sepolia.arbiscan.io/address/0x260653ff70b7165f3c6A4911BB9BeE13b8773359) |
 
 The page uses these addresses by default; any address typed in Settings overrides them.

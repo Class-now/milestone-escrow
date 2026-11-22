@@ -317,4 +317,64 @@ contract MilestoneEscrowTest is Test {
         assertEq(tok.balanceOf(payee), toPayee);
         assertEq(tok.balanceOf(address(esc)), 0);
     }
+
+    // ------------------------------------------------ token sanity (11-22)
+
+    function test_createRejectsTokenWithoutCode() public {
+        vm.prank(client);
+        vm.expectRevert(MilestoneEscrow.BadParams.selector);
+        esc.createJob(payee, arb, address(0x1234), amts, dls);
+    }
+
+    function test_fundRejectsFeeOnTransferToken() public {
+        FeeToken fee = new FeeToken();
+        vm.startPrank(client);
+        fee.mint(client, 10_000e6);
+        fee.approve(address(esc), type(uint256).max);
+        uint256 id = esc.createJob(payee, arb, address(fee), amts, dls);
+        vm.expectRevert(MilestoneEscrow.TransferFailed.selector);
+        esc.fund(id);
+        vm.stopPrank();
+        // nothing moved, job still unfunded
+        assertEq(fee.balanceOf(address(esc)), 0);
+        assertFalse(esc.getJob(id).funded);
+    }
+
+    function test_feeTokenCannotDrainOtherJobs() public {
+        // an honest job on the real token keeps its full balance
+        uint256 honest = _createFunded();
+        FeeToken fee = new FeeToken();
+        vm.startPrank(client);
+        fee.mint(client, 10_000e6);
+        fee.approve(address(esc), type(uint256).max);
+        uint256 id = esc.createJob(payee, arb, address(fee), amts, dls);
+        vm.expectRevert(MilestoneEscrow.TransferFailed.selector);
+        esc.fund(id);
+        vm.stopPrank();
+        assertEq(tok.balanceOf(address(esc)), 600e6);
+        assertTrue(esc.getJob(honest).funded);
+    }
+}
+
+/// @dev Takes a 1% fee on every transfer (the recipient gets 99%).
+contract FeeToken {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address to, uint256 v) external { balanceOf[to] += v; }
+
+    function approve(address s, uint256 v) external returns (bool) { allowance[msg.sender][s] = v; return true; }
+
+    function transfer(address to, uint256 v) external returns (bool) { _move(msg.sender, to, v); return true; }
+
+    function transferFrom(address f, address to, uint256 v) external returns (bool) {
+        allowance[f][msg.sender] -= v;
+        _move(f, to, v);
+        return true;
+    }
+
+    function _move(address f, address to, uint256 v) internal {
+        balanceOf[f] -= v;
+        balanceOf[to] += v - v / 100;
+    }
 }
