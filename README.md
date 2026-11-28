@@ -38,32 +38,42 @@ forge test              # 27 tests, 2 of them fuzz (512 runs each)
 open index.html         # or serve statically; needs a browser wallet
 ```
 
-`index.html` is a single file using ethers v6 (pinned CDN version). Enter the deployed escrow and token addresses, connect a wallet on Arbitrum Sepolia, then create, deposit, approve, refund, dispute and resolve.
+`index.html` is a single file using ethers v6 (pinned CDN version). Choose Arbitrum Sepolia or Robinhood Chain Testnet, connect a wallet (the page asks it to switch or add the network), then create, deposit, approve, refund, dispute and resolve. Every transaction in the log links to the network's explorer.
 
-## Deployed (Arbitrum Sepolia, chain 421614)
+## Deployed
 
-| Contract | Address |
-|---|---|
-| MilestoneEscrow | [0x55501CfbD04DA43110a59b792a326f2F929eFE91](https://sepolia.arbiscan.io/address/0x55501CfbD04DA43110a59b792a326f2F929eFE91) |
-| MockUSDG (test token) | [0x260653ff70b7165f3c6A4911BB9BeE13b8773359](https://sepolia.arbiscan.io/address/0x260653ff70b7165f3c6A4911BB9BeE13b8773359) |
+| Network | MilestoneEscrow | MockUSDG (test token) |
+|---|---|---|
+| Arbitrum Sepolia (421614) | [0x55501CfbD04DA43110a59b792a326f2F929eFE91](https://sepolia.arbiscan.io/address/0x55501CfbD04DA43110a59b792a326f2F929eFE91) | [0x260653ff70b7165f3c6A4911BB9BeE13b8773359](https://sepolia.arbiscan.io/address/0x260653ff70b7165f3c6A4911BB9BeE13b8773359) |
 
-The page uses these addresses by default; any address typed in Settings overrides them.
+Pick the network in the page (or open it with `?chain=robinhood-testnet`); it fills in that network's addresses, and any address typed in the fields overrides them.
 
 ## Deploy
 
 Secrets come from the environment only.
 
 ```
-export DEPLOYER_PRIVATE_KEY=...   # funded Arbitrum Sepolia key
-export ARBISCAN_API_KEY=...       # optional, for verification
-./deploy.sh                       # also deploys MockUSDG (DEPLOY_MOCK_TOKEN=true by default)
+export DEPLOYER_PRIVATE_KEY=...        # funded key on the target chain
+export ARBISCAN_API_KEY=...            # optional, verification on Arbitrum Sepolia
+./deploy.sh                            # Arbitrum Sepolia; also deploys MockUSDG (DEPLOY_MOCK_TOKEN=true by default)
+CHAIN=robinhood-testnet ./deploy.sh    # Robinhood Chain Testnet (VERIFY=true verifies on its Blockscout explorer)
+node script/set-deployment.mjs <chain> <MilestoneEscrow> <MockUSDG>   # writes the addresses into index.html and this table
 ```
 
-For real USDG, set `DEPLOY_MOCK_TOKEN=false` and paste the official USDG address into the page.
+`deploy.sh` checks that the RPC really is the chain you named before it broadcasts. For real USDG, set `DEPLOY_MOCK_TOKEN=false` and paste the official USDG address into the page.
 
 ## Arbitrum and Robinhood Chain
 
-The contract is plain Solidity 0.8.24 with no chain-specific code, so it deploys unchanged to Arbitrum One, Arbitrum Sepolia, or any Arbitrum Orbit chain including Robinhood Chain. Low fees on Arbitrum make small milestone payments (tens of dollars) economical, which is the use case on-chain escrow needs. To target another chain: change `RPC_URL` for `deploy.sh`, and the chain id and RPC in `index.html` (`CHAIN_ID`, `CHAIN_HEX`).
+The contract is plain Solidity 0.8.24 with no chain-specific code, so the same bytecode runs on Arbitrum One, Arbitrum Sepolia, and any Arbitrum Orbit chain, including Robinhood Chain (an Orbit chain that settles to Ethereum and uses ETH for gas). Low fees on Arbitrum make small milestone payments (tens of dollars) economical, which is the use case on-chain escrow needs.
+
+The page and the scripts share one list of networks (`CHAINS` in `index.html` and `e2e/run.mjs`, the `case` in `deploy.sh`):
+
+| Network | Chain id | Public RPC | Explorer |
+|---|---|---|---|
+| Arbitrum Sepolia | 421614 | https://sepolia-rollup.arbitrum.io/rpc | https://sepolia.arbiscan.io |
+| Robinhood Chain Testnet | 46630 | https://rpc.testnet.chain.robinhood.com | https://explorer.testnet.chain.robinhood.com |
+
+Adding another Orbit chain is one entry in each list. The end-to-end run works on either network (`CHAIN=robinhood-testnet node e2e/run.mjs`), and against a local `anvil --chain-id 46630` with `RPC_URL`, `ESCROW_ADDR` and `TOKEN_ADDR` (`E2E_OFFLINE=1` serves the page's ethers build from `e2e/node_modules`).
 
 ## Gas on Arbitrum
 
