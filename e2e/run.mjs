@@ -1,6 +1,7 @@
-// End-to-end check of index.html against the live Arbitrum Sepolia contracts.
+// End-to-end check of index.html against the live contracts (Arbitrum Sepolia by default).
 // A test wallet (EIP-1193) is injected into the page; signing happens in Node with a testnet-only key.
-// usage: DEPLOYER_PRIVATE_KEY=... node e2e/run.mjs [--video <dir>]
+// usage: DEPLOYER_PRIVATE_KEY=... [CHAIN=robinhood-testnet] [RPC_URL=...] [ESCROW_ADDR=... TOKEN_ADDR=...] node e2e/run.mjs [--video <dir>]
+// RPC_URL lets the same run go against a local anvil started with the chain's id (anvil --chain-id 46630).
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -12,12 +13,19 @@ const { ethers } = require("ethers");
 const { chromium } = require(process.env.PW_PATH || "playwright");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const RPC = "https://sepolia-rollup.arbitrum.io/rpc";
-const CHAIN_HEX = "0x66eee"; // 421614
+const CHAINS = {
+  "arbitrum-sepolia": { id: 421614, name: "Arbitrum Sepolia", rpc: "https://sepolia-rollup.arbitrum.io/rpc" },
+  "robinhood-testnet": { id: 46630, name: "Robinhood Chain Testnet", rpc: "https://rpc.testnet.chain.robinhood.com" },
+};
+const CHAIN = process.env.CHAIN || "arbitrum-sepolia";
+if (!CHAINS[CHAIN]) throw new Error("unknown CHAIN " + CHAIN);
+const { id: CHAIN_ID, name: CHAIN_NAME } = CHAINS[CHAIN];
+const RPC = process.env.RPC_URL || CHAINS[CHAIN].rpc;
+const CHAIN_HEX = "0x" + CHAIN_ID.toString(16);
 const videoIdx = process.argv.indexOf("--video");
 const videoDir = videoIdx > 0 ? process.argv[videoIdx + 1] : null;
 
-const rpc = new ethers.JsonRpcProvider(RPC, 421614, { staticNetwork: true });
+const rpc = new ethers.JsonRpcProvider(RPC, CHAIN_ID, { staticNetwork: true });
 const wallet = new ethers.Wallet(process.env.DEPLOYER_PRIVATE_KEY, rpc);
 const payee = ethers.Wallet.createRandom().address;
 const arbiterWallet = ethers.Wallet.createRandom().connect(rpc);
@@ -25,7 +33,8 @@ const arbiter = arbiterWallet.address;
 let active = wallet; // the account the injected wallet currently exposes
 
 const server = http.createServer((req, res) => {
-  const f = path.join(ROOT, req.url === "/" ? "index.html" : req.url.split("?")[0]);
+  const p = req.url.split("?")[0];
+  const f = path.join(ROOT, p === "/" ? "index.html" : p);
   if (!f.startsWith(ROOT) || !fs.existsSync(f)) { res.writeHead(404); return res.end(); }
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); fs.createReadStream(f).pipe(res);
 }).listen(0, "127.0.0.1");
@@ -36,7 +45,7 @@ async function handle(method, params) {
   switch (method) {
     case "eth_requestAccounts": case "eth_accounts": return [active.address];
     case "eth_chainId": return CHAIN_HEX;
-    case "net_version": return "421614";
+    case "net_version": return String(CHAIN_ID);
     case "wallet_switchEthereumChain": case "wallet_addEthereumChain": return null;
     case "eth_sendTransaction": {
       const t = params[0];
@@ -51,6 +60,8 @@ async function handle(method, params) {
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 },
   ...(videoDir ? { recordVideo: { dir: videoDir, size: { width: 1280, height: 860 } } } : {}) });
+// E2E_OFFLINE=1 serves the page's pinned ethers build from node_modules (for machines without CDN access).
+if (process.env.E2E_OFFLINE) await ctx.route(/cdn\.jsdelivr\.net\/npm\/ethers@/, r => r.fulfill({ path: path.join(path.dirname(require.resolve("ethers")), "../dist/ethers.umd.min.js") }));
 await ctx.exposeBinding("__wallet", async (_src, method, params) => {
   try { return { ok: await handle(method, params) }; } catch (e) { return { err: e.shortMessage || e.message }; }
 });
@@ -96,8 +107,10 @@ const results = [];
 const step = async (name, fn) => { const t0 = Date.now(); await fn(); results.push(`${name}: ok (${((Date.now() - t0) / 1000).toFixed(1)} s)`); };
 
 try {
-  await page.goto(url); await pause(1500);
-  await caption("MilestoneEscrow: milestone payments in USDG for cross-border freelancers, live on Arbitrum Sepolia");
+  await page.goto(url + "?chain=" + CHAIN); await pause(1500);
+  if (process.env.ESCROW_ADDR) { await page.fill("#escrowAddr", process.env.ESCROW_ADDR); await page.dispatchEvent("#escrowAddr", "change"); }
+  if (process.env.TOKEN_ADDR) { await page.fill("#tokenAddr", process.env.TOKEN_ADDR); await page.dispatchEvent("#tokenAddr", "change"); }
+  await caption("MilestoneEscrow: milestone payments in USDG for cross-border freelancers, live on " + CHAIN_NAME);
   await step("connect", async () => { await page.click("#connect"); await waitLog(/Connected 0x/); });
   await pause(1000);
   const T = ethers.getAddress(await page.inputValue("#tokenAddr"));

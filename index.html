@@ -14,7 +14,8 @@
   .sub { color:var(--mut); margin-bottom:18px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
   label { display:block; font-size:12px; color:var(--mut); margin:8px 0 2px; }
-  input { width:100%; padding:8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; }
+  input, select { width:100%; padding:8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; }
+  a { color:var(--acc); }
   .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   button { padding:8px 14px; border-radius:6px; border:0; background:var(--acc); color:#fff; font:inherit; cursor:pointer; margin:8px 6px 0 0; }
   button.sec { background:transparent; border:1px solid var(--line); color:var(--fg); }
@@ -29,10 +30,12 @@
 <body>
 <main>
   <h1>MilestoneEscrow</h1>
-  <div class="sub">Milestone-based escrow for USDG on Arbitrum Sepolia. Testnet demo.</div>
+  <div class="sub">Milestone-based escrow for USDG on Arbitrum. Testnet demo on Arbitrum Sepolia and Robinhood Chain Testnet.</div>
 
   <div class="card">
     <h2>Wallet and contracts</h2>
+    <label>Network</label><select id="chain"></select>
+    <div id="chainNote" class="sub"></div>
     <button id="connect">Connect wallet</button> <span id="acct" class="sub"></span>
     <div class="row">
       <div><label>Escrow contract address</label><input id="escrowAddr" placeholder="0x..."></div>
@@ -70,8 +73,18 @@
 
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
 <script>
-const CHAIN_ID = 421614n;
-const CHAIN_HEX = "0x66eee";
+// Same bytecode on every chain. Arbitrum Sepolia is the default; Robinhood Chain is an Arbitrum Orbit chain.
+const CHAINS = {
+  "arbitrum-sepolia": { id: 421614n, name: "Arbitrum Sepolia", rpc: "https://sepolia-rollup.arbitrum.io/rpc",
+    explorer: "https://sepolia.arbiscan.io" },
+  "robinhood-testnet": { id: 46630n, name: "Robinhood Chain Testnet", rpc: "https://rpc.testnet.chain.robinhood.com",
+    explorer: "https://explorer.testnet.chain.robinhood.com" },
+};
+// Default addresses per chain (script/set-deployment.mjs writes these after a deploy).
+const DEPLOYED = {
+  "arbitrum-sepolia": { e: "0x55501CfbD04DA43110a59b792a326f2F929eFE91", t: "0x260653ff70b7165f3c6A4911BB9BeE13b8773359" },
+  "robinhood-testnet": { e: "", t: "" },
+};
 const DECIMALS = 6;
 const STATUS = ["Pending", "Released", "Refunded", "Disputed", "Resolved"];
 const ESCROW_ABI = [
@@ -90,14 +103,38 @@ const ERC20_ABI = [
 const $ = id => document.getElementById(id);
 let provider, signer, me, job;
 
-function log(msg, cls) {
+function log(msg, cls, href) {
   const d = document.createElement("div"); if (cls) d.className = cls; d.textContent = msg;
+  if (href) { const a = document.createElement("a"); a.href = href; a.target = "_blank"; a.rel = "noopener"; a.textContent = " (explorer)"; d.appendChild(a); }
   $("log").prepend(d);
 }
-function saved() { try { return JSON.parse(localStorage.getItem("esc") || "{}"); } catch { return {}; } }
-function save() { try { localStorage.setItem("esc", JSON.stringify({ e: $("escrowAddr").value, t: $("tokenAddr").value })); } catch {} }
-const DEPLOYED = { e: "0x55501CfbD04DA43110a59b792a326f2F929eFE91", t: "0x260653ff70b7165f3c6A4911BB9BeE13b8773359" }; // Arbitrum Sepolia
-const s = saved(); $("escrowAddr").value = s.e || DEPLOYED.e; $("tokenAddr").value = s.t || DEPLOYED.t;
+function pickChain() {
+  const q = new URLSearchParams(location.search).get("chain");
+  if (q && CHAINS[q]) return q;
+  try { const c = localStorage.getItem("escChain"); if (c && CHAINS[c]) return c; } catch {}
+  return "arbitrum-sepolia";
+}
+let chainKey = pickChain();
+const CH = () => CHAINS[chainKey];
+const storeKey = () => chainKey === "arbitrum-sepolia" ? "esc" : "esc:" + chainKey; // "esc" kept for earlier visitors
+function saved() { try { return JSON.parse(localStorage.getItem(storeKey()) || "{}"); } catch { return {}; } }
+function save() { try { localStorage.setItem(storeKey(), JSON.stringify({ e: $("escrowAddr").value, t: $("tokenAddr").value })); } catch {} }
+function showChain() {
+  const s = saved(), d = DEPLOYED[chainKey];
+  $("escrowAddr").value = s.e || d.e; $("tokenAddr").value = s.t || d.t;
+  $("chainNote").textContent = d.e ? `Chain ${CH().id}. Contracts: ` : `Chain ${CH().id}. No default deployment on this network yet: deploy with CHAIN=${chainKey} ./deploy.sh and paste the addresses.`;
+  if (d.e) { const a = document.createElement("a"); a.href = CH().explorer + "/address/" + d.e; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = "escrow on the explorer"; $("chainNote").appendChild(a); }
+}
+for (const [k, c] of Object.entries(CHAINS)) { const o = document.createElement("option"); o.value = k; o.textContent = c.name; $("chain").appendChild(o); }
+$("chain").value = chainKey; showChain();
+$("chain").onchange = () => {
+  chainKey = $("chain").value; showChain();
+  try { localStorage.setItem("escChain", chainKey); } catch {}
+  const u = new URL(location.href); u.searchParams.set("chain", chainKey); history.replaceState(null, "", u);
+  signer = undefined; me = undefined; $("acct").textContent = ""; $("jobInfo").textContent = ""; $("msbox").innerHTML = "";
+  log("Network set to " + CH().name + ". Connect the wallet again.");
+};
 $("escrowAddr").onchange = $("tokenAddr").onchange = save;
 
 async function run(label, fn) {
@@ -109,7 +146,7 @@ function escrow() {
 }
 function token() { return new ethers.Contract(ethers.getAddress($("tokenAddr").value.trim()), ERC20_ABI, signer); }
 async function send(label, p) {
-  const tx = await p; log(label + " sent: " + tx.hash);
+  const tx = await p; log(label + " sent: " + tx.hash, "", CH().explorer + "/tx/" + tx.hash);
   const r = await tx.wait(); log(label + " confirmed in block " + r.blockNumber, "ok"); return r;
 }
 
@@ -117,16 +154,18 @@ $("connect").onclick = () => run("Connect", async () => {
   if (!window.ethereum) throw new Error("No wallet found (install MetaMask)");
   provider = new ethers.BrowserProvider(window.ethereum);
   await provider.send("eth_requestAccounts", []);
+  const c = CH(), hex = "0x" + c.id.toString(16);
   const net = await provider.getNetwork();
-  if (net.chainId !== CHAIN_ID) {
-    try { await provider.send("wallet_switchEthereumChain", [{ chainId: CHAIN_HEX }]); }
-    catch { await provider.send("wallet_addEthereumChain", [{ chainId: CHAIN_HEX, chainName: "Arbitrum Sepolia",
-      nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"],
-      blockExplorerUrls: ["https://sepolia.arbiscan.io"] }]); }
+  if (net.chainId !== c.id) {
+    try { await provider.send("wallet_switchEthereumChain", [{ chainId: hex }]); }
+    catch { await provider.send("wallet_addEthereumChain", [{ chainId: hex, chainName: c.name,
+      nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: [c.rpc],
+      blockExplorerUrls: [c.explorer] }]); }
     provider = new ethers.BrowserProvider(window.ethereum);
+    if ((await provider.getNetwork()).chainId !== c.id) throw new Error("Wallet is not on " + c.name);
   }
   signer = await provider.getSigner(); me = await signer.getAddress();
-  $("acct").textContent = me; log("Connected " + me, "ok");
+  $("acct").textContent = me; log("Connected " + me + " on " + c.name, "ok");
 });
 
 $("faucet").onclick = () => run("Faucet", async () => send("Faucet", token().faucet(ethers.parseUnits("1000", DECIMALS))));
